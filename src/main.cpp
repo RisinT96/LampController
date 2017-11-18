@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#define FASTLED_ALLOW_INTERRUPTS 0
 #include "FastLED.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -20,11 +21,11 @@ FASTLED_USING_NAMESPACE
 #define CONFIG_WIFI_PASS "1111111111111"
 
 // MQTT
-#define CONFIG_MQTT_HOST "Pi3_HomeAssistant"
+#define CONFIG_MQTT_HOST "192.168.1.114"
 #define CONFIG_MQTT_USER "Tal_LEDLamp"
 #define CONFIG_MQTT_PASS "1qazxsw2"
 
-#define CONFIG_MQTT_CLIENT_ID "ESP8266_Tal_Lamp" // Must be unique on the MQTT network
+#define CONFIG_MQTT_CLIENT_ID "esp8266-3922b6" // Must be unique on the MQTT network
 
 // MQTT Topics
 #define CONFIG_MQTT_TOPIC_STATE "home/esp8266_lamp"
@@ -88,6 +89,7 @@ void ICACHE_FLASH_ATTR blendToColor(CRGB newColor, unsigned char fadeAmount, uns
             for (unsigned int j = 0; j <= i; j++)
             {
                 leds[j] = blend(ledsOrig[j], newColor, fadeArray[j]);
+
                 fadeArray[j] = fadeArray[j] + fadeAmount;
                 if (fadeArray[j] < fadeAmount)
                     fadeArray[j] = 255; //handle overflow
@@ -100,6 +102,7 @@ void ICACHE_FLASH_ATTR blendToColor(CRGB newColor, unsigned char fadeAmount, uns
                         fadeArray[index] = 255; //handle overflow
                 }
             }
+            FastLED.show();
             FastLED.delay(FADE_DELAY);
         }
     }
@@ -112,9 +115,11 @@ void ICACHE_FLASH_ATTR blendToColor(CRGB newColor, unsigned char fadeAmount, uns
             if (fadeArray[j] < fadeAmount)
                 fadeArray[j] = 255;
         }
+        FastLED.show();
         FastLED.delay(FADE_DELAY);
     }
     fill_solid(leds, NUM_LEDS, newColor);
+    FastLED.show();
 }
 
 //Default fadeAmount and repeatAmount setting.
@@ -159,25 +164,6 @@ byte realBlue = 0;
 
 bool stateOn = false;
 
-// Globals for fade/transitions
-bool startFade = false;
-int transitionTime = 0;
-bool inFade = false;
-
-// Globals for flash
-bool flash = false;
-bool startFlash = false;
-int flashLength = 0;
-unsigned long flashStartTime = 0;
-byte flashRed = red;
-byte flashGreen = green;
-byte flashBlue = blue;
-byte flashBrightness = brightness;
-
-// Globals for colorfade
-bool colorfade = false;
-int currentColor = 0;
-
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -204,94 +190,17 @@ bool ICACHE_FLASH_ATTR processJson(char *message)
             stateOn = false;
         }
     }
-
-    // If "flash" is included, treat RGB and brightness differently
-    if (root.containsKey("flash") ||
-        (root.containsKey("effect") && strcmp(root["effect"], "flash") == 0))
+    if (root.containsKey("color"))
     {
-
-        if (root.containsKey("flash"))
-        {
-            flashLength = (int)root["flash"] * 1000;
-        }
-        else
-        {
-            flashLength = CONFIG_DEFAULT_FLASH_LENGTH * 1000;
-        }
-
-        if (root.containsKey("brightness"))
-        {
-            flashBrightness = root["brightness"];
-        }
-        else
-        {
-            flashBrightness = brightness;
-        }
-
-        if (root.containsKey("color"))
-        {
-            flashRed = root["color"]["r"];
-            flashGreen = root["color"]["g"];
-            flashBlue = root["color"]["b"];
-        }
-        else
-        {
-            flashRed = red;
-            flashGreen = green;
-            flashBlue = blue;
-        }
-
-        flash = true;
-        startFlash = true;
+        red = root["color"]["r"];
+        green = root["color"]["g"];
+        blue = root["color"]["b"];
     }
-    else if (root.containsKey("effect") &&
-             (strcmp(root["effect"], "colorfade_slow") == 0 || strcmp(root["effect"], "colorfade_fast") == 0))
+
+    if (root.containsKey("brightness"))
     {
-        flash = false;
-        colorfade = true;
-        currentColor = 0;
-        if (strcmp(root["effect"], "colorfade_slow") == 0)
-        {
-            transitionTime = CONFIG_COLORFADE_TIME_SLOW;
-        }
-        else
-        {
-            transitionTime = CONFIG_COLORFADE_TIME_FAST;
-        }
-    }
-    else if (colorfade && !root.containsKey("color") && root.containsKey("brightness"))
-    {
-        // Adjust brightness during colorfade
-        // (will be applied when fading to the next color)
         brightness = root["brightness"];
     }
-    else
-    { // No effect
-        flash = false;
-        colorfade = false;
-
-        if (root.containsKey("color"))
-        {
-            red = root["color"]["r"];
-            green = root["color"]["g"];
-            blue = root["color"]["b"];
-        }
-
-        if (root.containsKey("brightness"))
-        {
-            brightness = root["brightness"];
-        }
-
-        if (root.containsKey("transition"))
-        {
-            transitionTime = root["transition"];
-        }
-        else
-        {
-            transitionTime = 0;
-        }
-    }
-
     return true;
 }
 
@@ -307,27 +216,13 @@ void ICACHE_FLASH_ATTR sendState()
     color["g"] = green;
     color["b"] = blue;
 
-    root["brightness"] = brightness;
-
-    if (colorfade)
-    {
-         if (transitionTime == CONFIG_COLORFADE_TIME_SLOW)
-         {
-             root["effect"] = "colorfade_slow";
-         }
-         else
-         {
-             root["effect"] = "colorfade_fast";
-         }
-     }
-     else
-     {
-         root["effect"] = "null";
-     }
+    root["brightness"] = FastLED.getBrightness();
+    root["effect"] = "null";
 
     char buffer[root.measureLength() + 1];
     root.printTo(buffer, sizeof(buffer));
-
+    Serial.println("Sending message:");
+    Serial.println(buffer);
     client.publish(light_state_topic, buffer, true);
 }
 
@@ -356,16 +251,16 @@ void ICACHE_FLASH_ATTR callback(char *topic, byte *payload, unsigned int length)
         realRed = red;
         realGreen = green;
         realBlue = blue;
+        blendToColor(CRGB(realRed, realGreen, realBlue));
+        FastLED.setBrightness(brightness);
     }
     else
     {
         realRed = 0;
         realGreen = 0;
         realBlue = 0;
+        blendToColor(CRGB::Black);
     }
-
-    startFade = true;
-    inFade = false; // Kill the current fade
 
     sendState();
 }
@@ -383,7 +278,7 @@ void ICACHE_FLASH_ATTR SetupFastLED()
 
     // set master brightness control
     FastLED.setBrightness(brightness);
-    blendToColor(CRGB::Black);
+    blendToColor(CRGB::White);
 }
 
 void ICACHE_FLASH_ATTR setup()
@@ -398,12 +293,11 @@ void ICACHE_FLASH_ATTR setup()
         Serial.println("Trying to connect to network...");
         WiFi.mode(WIFI_STA);
         WiFi.begin(ssid, pass);
-        delay(5000);
+        FastLED.delay(5000);
         if (WiFi.status() != WL_CONNECTED)
         {
             Serial.println("Connection Failed! Rebooting...");
-            Serial.println(WiFi.status());
-            delay(5000);
+            FastLED.delay(5000);
             ESP.restart();
         }
     }
@@ -412,9 +306,38 @@ void ICACHE_FLASH_ATTR setup()
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
 
+    Serial.println("Setting up mDNS...");
+    if (!MDNS.begin("esp8266-3922b6"))
+    {
+        Serial.println("Error setting up mDNS! Rebooting...");
+        FastLED.delay(5000);
+        ESP.restart();
+    }
+    else
+    {
+        Serial.println("mDNS setup finished.");
+    }
+
+    Serial.println("Looking for MQTT Broker...");
+    int n = MDNS.queryService("mqtt", "tcp");
+    if (n == 0)
+    {
+        Serial.println("No broker found!");
+    }
+    else
+    {
+        Serial.print("Found ");
+        Serial.print(n);
+        Serial.println(" brokers:");
+        // at least one MQTT service is found
+        // ip no and port of the first one is MDNS.IP(0) and MDNS.port(0)
+        for (int i = 0; i < n; i++)
+        {
+            Serial.println(MDNS.hostname(i));
+        }
+    }
     client.setServer(mqtt_server, 1883);
     client.setCallback(callback);
-
 
     ArduinoOTA.onStart([]() {
         Serial.println("OTA Start");
@@ -477,41 +400,13 @@ void ICACHE_FLASH_ATTR setColor(int inR, int inG, int inB)
 void ICACHE_FLASH_ATTR loop()
 {
     ArduinoOTA.handle();
-    EVERY_N_MILLISECONDS(1000 / FRAMES_PER_SECOND)
-    {
-        FastLED.show();
-    }
+    // EVERY_N_MILLISECONDS(1000 / FRAMES_PER_SECOND)
+    // {
+    //     FastLED.show();
+    // }
     if (!client.connected())
     {
         reconnect();
     }
     client.loop();
-    if (flash)
-    {
-        if (startFlash)
-        {
-            startFlash = false;
-            flashStartTime = millis();
-        }
-
-        if ((millis() - flashStartTime) <= flashLength)
-        {
-            if ((millis() - flashStartTime) % 1000 <= 500)
-            {
-                blendToColor(CRGB(flashRed, flashGreen, flashBlue));
-            }
-            else
-            {
-                blendToColor(CRGB::Black);
-                // If you'd prefer the flashing to happen "on top of"
-                // the current color, uncomment the next line.
-                // setColor(realRed, realGreen, realBlue);
-            }
-        }
-        else
-        {
-            flash = false;
-            blendToColor(CRGB(realRed, realGreen, realBlue));
-        }
-    }
 }
