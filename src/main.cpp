@@ -23,6 +23,7 @@ FASTLED_USING_NAMESPACE
 #define DATA_PIN5 D5
 #define DATA_PIN6 D6
 #define DATA_PIN7 D7
+#define DATA_PIN8 D8
 
 #define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
@@ -38,15 +39,58 @@ CRGB leds[NUM_LEDS];
 
 #define FRAMES_PER_SECOND 60
 
+const char *WIFI_SSID = "TP-LINK_2.4";
+const char *WIFI_PASSWORD = "1111111111111";
+
+// MQTT: ID, server IP, port, username and password
+const PROGMEM char *MQTT_CLIENT_ID = "esp8266-3922b6";
+IPAddress MQTT_SERVER_IP = IPAddress(192, 168, 1, 114);
+uint16_t MQTT_SERVER_PORT = 1883;
+const PROGMEM char *MQTT_USER = "Tal_LEDLamp";
+const PROGMEM char *MQTT_PASSWORD = "1qazxsw2";
+
+// MQTT: topics
+// state
+const PROGMEM char *MQTT_LIGHT_STATE_TOPIC = "home/esp8266_lamp/light/status";
+const PROGMEM char *MQTT_LIGHT_COMMAND_TOPIC = "home/esp8266_lamp/light/switch";
+
+// brightness
+const PROGMEM char *MQTT_LIGHT_BRIGHTNESS_STATE_TOPIC = "home/esp8266_lamp/brightness/status";
+const PROGMEM char *MQTT_LIGHT_BRIGHTNESS_COMMAND_TOPIC = "home/esp8266_lamp/brightness/set";
+
+// colors (rgb)
+const PROGMEM char *MQTT_LIGHT_RGB_STATE_TOPIC = "home/esp8266_lamp/rgb/status";
+const PROGMEM char *MQTT_LIGHT_RGB_COMMAND_TOPIC = "home/esp8266_lamp/rgb/set";
+
+// effects
+const PROGMEM char *MQTT_LIGHT_EFFECT_STATE_TOPIC = "home/esp8266_lamp/effect/status";
+const PROGMEM char *MQTT_LIGHT_EFFECT_COMMAND_TOPIC = "home/esp8266_lamp/effect/set";
+
+// payloads by default (on/off)
+const PROGMEM char *LIGHT_ON = "ON";
+const PROGMEM char *LIGHT_OFF = "OFF";
+
+//const int BUFFER_SIZE = JSON_OBJECT_SIZE(15);
+
+// Maintained state for reporting to HA
+boolean m_rgb_state = false;
+uint8_t m_rgb_brightness = 100;
+uint8_t m_rgb_red = 255;
+uint8_t m_rgb_green = 255;
+uint8_t m_rgb_blue = 255;
+
+// buffer used to send/receive data with MQTT
+const uint8_t MSG_BUFFER_SIZE = 20;
+char m_msg_buffer[MSG_BUFFER_SIZE];
+
 //Gradually fades to newColor from initial state, starting from the center beams, spreading out.
 void blendToColor(CRGB newColor, unsigned char fadeAmount, unsigned int repeatAmount)
 {
-    Serial.println("Setting LEDs:");
-    Serial.print("r: ");
+    Serial.print("INFO:\tSetting LEDs: ");
     Serial.print(newColor.r);
-    Serial.print(", g: ");
+    Serial.print(", ");
     Serial.print(newColor.g);
-    Serial.print(", b: ");
+    Serial.print(", ");
     Serial.println(newColor.b);
 
     unsigned char fadeArray[NUM_LEDS] = {0};
@@ -81,7 +125,7 @@ void blendToColor(CRGB newColor, unsigned char fadeAmount, unsigned int repeatAm
             FastLED.delay(FADE_DELAY);
         }
     }
-    FastLED.delay(50);
+    FastLED.delay(25);
     for (unsigned int i = 0; i < 255 / fadeAmount; i++)
     {
         for (unsigned int j = 0; j < NUM_LEDS; j++)
@@ -92,7 +136,7 @@ void blendToColor(CRGB newColor, unsigned char fadeAmount, unsigned int repeatAm
                 fadeArray[j] = 255;
         }
         FastLED.show();
-        FastLED.delay(FADE_DELAY);
+        FastLED.delay(FADE_DELAY + 5);
     }
     fill_solid(leds, NUM_LEDS, newColor);
     FastLED.show();
@@ -110,46 +154,6 @@ void blendToColor(CRGB newColor, unsigned char fadeAmount)
     blendToColor(newColor, fadeAmount, 30 / fadeAmount);
 }
 
-const char *WIFI_SSID = "TP-LINK_2.4";
-const char *WIFI_PASSWORD = "1111111111111";
-
-// MQTT: ID, server IP, port, username and password
-const PROGMEM char *MQTT_CLIENT_ID = "esp8266-3922b6";
-const PROGMEM char *MQTT_SERVER_IP = "192.168.1.114";
-const PROGMEM uint16_t MQTT_SERVER_PORT = 1883;
-const PROGMEM char *MQTT_USER = "Tal_LEDLamp";
-const PROGMEM char *MQTT_PASSWORD = "1qazxsw2";
-
-// MQTT: topics
-// state
-const PROGMEM char *MQTT_LIGHT_STATE_TOPIC = "home/esp8266_lamp/light/status";
-const PROGMEM char *MQTT_LIGHT_COMMAND_TOPIC = "home/esp8266_lamp/light/switch";
-
-// brightness
-const PROGMEM char *MQTT_LIGHT_BRIGHTNESS_STATE_TOPIC = "home/esp8266_lamp/brightness/status";
-const PROGMEM char *MQTT_LIGHT_BRIGHTNESS_COMMAND_TOPIC = "home/esp8266_lamp/brightness/set";
-
-// colors (rgb)
-const PROGMEM char *MQTT_LIGHT_RGB_STATE_TOPIC = "home/esp8266_lamp/rgb/status";
-const PROGMEM char *MQTT_LIGHT_RGB_COMMAND_TOPIC = "home/esp8266_lamp/rgb/set";
-
-// payloads by default (on/off)
-const PROGMEM char *LIGHT_ON = "ON";
-const PROGMEM char *LIGHT_OFF = "OFF";
-
-//const int BUFFER_SIZE = JSON_OBJECT_SIZE(15);
-
-// Maintained state for reporting to HA
-boolean m_rgb_state = false;
-uint8_t m_rgb_brightness = 100;
-uint8_t m_rgb_red = 255;
-uint8_t m_rgb_green = 255;
-uint8_t m_rgb_blue = 255;
-
-// buffer used to send/receive data with MQTT
-const uint8_t MSG_BUFFER_SIZE = 20;
-char m_msg_buffer[MSG_BUFFER_SIZE];
-
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);
 
@@ -158,8 +162,8 @@ void setColor(uint8_t p_red, uint8_t p_green, uint8_t p_blue)
 {
     uint8_t brightness = map(m_rgb_brightness, 0, 100, 0, 255);
     CRGB color = CRGB(p_red, p_green, p_blue);
-    color.fadeLightBy(255-brightness);
-    blendToColor(color);
+    color.fadeLightBy(255 - brightness);
+    blendToColor(color,6,6);
 }
 
 // function called to publish the state of the led (on/off)
@@ -198,14 +202,18 @@ void callback(char *p_topic, byte *p_payload, unsigned int p_length)
     {
         payload.concat((char)p_payload[i]);
     }
-
+    Serial.print("DEBUG:\tReceived message from \"");
+    Serial.print(p_topic);
+    Serial.print("\"\n\tPayload: \"");
+    Serial.print(payload);
+    Serial.println("\"");
     // handle message topic
     if (String(MQTT_LIGHT_COMMAND_TOPIC).equals(p_topic))
     {
         // test if the payload is equal to "ON" or "OFF"
         if (payload.equals(String(LIGHT_ON)))
         {
-            if (m_rgb_state != true)
+            if (!m_rgb_state)
             {
                 m_rgb_state = true;
                 setColor(m_rgb_red, m_rgb_green, m_rgb_blue);
@@ -214,7 +222,7 @@ void callback(char *p_topic, byte *p_payload, unsigned int p_length)
         }
         else if (payload.equals(String(LIGHT_OFF)))
         {
-            if (m_rgb_state != false)
+            if (m_rgb_state)
             {
                 m_rgb_state = false;
                 setColor(0, 0, 0);
@@ -281,34 +289,34 @@ void callback(char *p_topic, byte *p_payload, unsigned int p_length)
 void ICACHE_FLASH_ATTR SetupFastLED()
 {
     // Tell FastLED about the LED strip configuration, all 6 strips are identical.
-    FastLED.addLeds<LED_TYPE, DATA_PIN1, COLOR_ORDER>(leds, NUM_LEDS);
+    //FastLED.addLeds<LED_TYPE, DATA_PIN1, COLOR_ORDER>(leds, NUM_LEDS);
     //FastLED.addLeds<LED_TYPE, DATA_PIN2, COLOR_ORDER>(leds, NUM_LEDS);
     //FastLED.addLeds<LED_TYPE, DATA_PIN3, COLOR_ORDER>(leds, NUM_LEDS);
     //FastLED.addLeds<LED_TYPE, DATA_PIN4, COLOR_ORDER>(leds, NUM_LEDS);
     //FastLED.addLeds<LED_TYPE, DATA_PIN5, COLOR_ORDER>(leds, NUM_LEDS);
-    //FastLED.addLeds<LED_TYPE, DATA_PIN6, COLOR_ORDER>(leds, NUM_LEDS);
+    FastLED.addLeds<LED_TYPE, DATA_PIN6, COLOR_ORDER>(leds, NUM_LEDS);
     //FastLED.addLeds<LED_TYPE, DATA_PIN7, COLOR_ORDER>(leds, NUM_LEDS);
-
-    blendToColor(CRGB::White);
+    //FastLED.addLeds<LED_TYPE, DATA_PIN8, COLOR_ORDER>(leds, NUM_LEDS);
+    FastLED.setCorrection(0xFFB978);
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    blendToColor(CRGB::White, 6);
 }
 
 void ICACHE_FLASH_ATTR setup()
 {
     delay(3000); // 3 second delay for recovery
 
-    Serial.begin(9600);
-    Serial.println();
-    Serial.println("INFO: Booting...");
+    Serial.begin(921600);
+
+    Serial.println("\n\n\n\nINFO:\tBooting...");
 
     //Init lamp to White
     SetupFastLED();
 
-    Serial.println();
     //Init WiFi connection
     if (WiFi.status() != WL_CONNECTED)
     {
-
-        Serial.print("INFO: Connecting to ");
+        Serial.print("\nINFO:\tConnecting to ");
         Serial.println(WIFI_SSID);
 
         WiFi.mode(WIFI_STA);
@@ -320,65 +328,68 @@ void ICACHE_FLASH_ATTR setup()
         }
     }
 
-    Serial.println();
-    Serial.println("INFO: WiFi connected");
-    Serial.print("INFO: IP address: ");
+    Serial.println("\nINFO:\tWiFi connected");
+    Serial.print("INFO:\tIP address: ");
     Serial.println(WiFi.localIP());
 
-    Serial.println();
-    Serial.println("INFO: Setting up mDNS");
+    Serial.println("\nINFO:\tSetting up mDNS");
     if (!MDNS.begin("esp8266-3922b6"))
     {
-        Serial.println("ERROR: failed, Rebooting...");
+        Serial.println("ERROR:\tfailed, Rebooting...");
         FastLED.delay(5000);
         ESP.restart();
     }
     else
     {
-        Serial.println("INFO: mDNS ready");
+        Serial.println("INFO:\tmDNS ready, device name: \"esp8266-3922b6\"");
     }
 
-    Serial.println();
-    Serial.println("INFO: Searching for MQTT Broker");
+
+    Serial.println("\nINFO:\tSearching for MQTT Broker");
     int n = MDNS.queryService("ssh", "tcp");
     if (n == 0)
     {
-        Serial.println("INFO: No broker found!");
+        Serial.print("INFO:\tNo broker found!");
     }
     else
     {
-        Serial.print("INFO: Found ");
+        Serial.print("INFO:\tFound ");
         Serial.print(n);
-        Serial.println(" brokers:");
+        Serial.print(" brokers:");
         // at least one MQTT service is found
         // ip no and port of the first one is MDNS.IP(0) and MDNS.port(0)
         for (int i = 0; i < n; i++)
         {
-            Serial.print("\t");
-            Serial.println(MDNS.hostname(i));
+            Serial.print("\n\t  -- ");
+            Serial.print(MDNS.hostname(i));
+            if (MDNS.hostname(i).equalsIgnoreCase("hassio"))
+            {
+                Serial.print("\n\t     - Home Assistant!");
+                MQTT_SERVER_IP = MDNS.IP(i);
+            }
         }
     }
 
-    Serial.println();
-    Serial.print("INFO: Connecting to ");
+    Serial.print("\n\nINFO:\tWill connect to ");
     Serial.print(MQTT_SERVER_IP);
     Serial.print(":");
     Serial.println(MQTT_SERVER_PORT);
 
     client.setServer(MQTT_SERVER_IP, MQTT_SERVER_PORT);
+
     client.setCallback(callback);
 
     ArduinoOTA.onStart([]() {
-        Serial.println("OTA Start");
+        Serial.println("\nINFO:\tOTA Start");
     });
     ArduinoOTA.onEnd([]() {
-        Serial.println("\nOTA End");
+        Serial.println("\nINFO:\tOTA End");
     });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("OTA Progress: %u%%\r", (progress / (total / 100)));
+        Serial.printf("INFO:\tOTA Progress: %u%%\r", (progress / (total / 100)));
     });
     ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("OTA Error[%u]: ", error);
+        Serial.printf("ERROR:\tOTA Error[%u]: ", error);
         if (error == OTA_AUTH_ERROR)
             Serial.println("Auth Failed");
         else if (error == OTA_BEGIN_ERROR)
@@ -392,43 +403,46 @@ void ICACHE_FLASH_ATTR setup()
     });
 
     ArduinoOTA.begin();
-
-    Serial.println("INFO: Setup complete");
 }
 
 void ICACHE_FLASH_ATTR reconnect()
 {
     // Loop until we're reconnected
-    while (!client.connected())
+    for (int i=0; i<5 && !client.connected(); i++)
     {
-        Serial.print("INFO: Attempting MQTT connection...");
+        Serial.println("INFO:\tAttempting MQTT connection");
         // Attempt to connect
         if (client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD))
         {
-            Serial.println("INFO: connected");
+            Serial.println("INFO:\tConnected");
 
             // Once connected, publish an announcement...
             // publish the initial values
-            publishRGBState();
-            publishRGBBrightness();
-            publishRGBColor();
+            //publishRGBState();
+            //publishRGBBrightness();
+            //publishRGBColor();
 
             // ... and resubscribe
             client.subscribe(MQTT_LIGHT_COMMAND_TOPIC);
             client.subscribe(MQTT_LIGHT_BRIGHTNESS_COMMAND_TOPIC);
             client.subscribe(MQTT_LIGHT_RGB_COMMAND_TOPIC);
+            client.subscribe(MQTT_LIGHT_EFFECT_COMMAND_TOPIC);
         }
         else
         {
-            Serial.print("ERROR: failed, rc=");
+            Serial.print("ERROR:\tfailed, rc=");
             Serial.print(client.state());
-            Serial.println("DEBUG: try again in 5 seconds");
+            Serial.print("DEBUG:\ttry again in 5 seconds");
             // Wait 5 seconds before retrying
-            delay(5000);
+            for (int j = 0; j < 5; j++)
+            {
+                FastLED.delay(1000);
+                Serial.print(".");
+            }
+            Serial.println();
         }
     }
 }
-
 
 void loop()
 {
