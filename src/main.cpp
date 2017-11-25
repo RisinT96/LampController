@@ -438,6 +438,7 @@ void ICACHE_FLASH_ATTR reconnect()
             {
                 FastLED.delay(1000);
                 Serial.print(".");
+                ArduinoOTA.handle();
             }
             Serial.println();
         }
