@@ -297,7 +297,7 @@ void ICACHE_FLASH_ATTR SetupFastLED()
     FastLED.addLeds<LED_TYPE, DATA_PIN6, COLOR_ORDER>(leds, NUM_LEDS);
     //FastLED.addLeds<LED_TYPE, DATA_PIN7, COLOR_ORDER>(leds, NUM_LEDS);
     //FastLED.addLeds<LED_TYPE, DATA_PIN8, COLOR_ORDER>(leds, NUM_LEDS);
-    FastLED.setCorrection(0xFFB978);
+    //FastLED.setCorrection(0xFFB978);
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     blendToColor(CRGB::White, 6);
 }
