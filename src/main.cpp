@@ -16,9 +16,9 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
-//#define DEBUG
-//#define INFO
-//#define DEBUG
+#define DEBUG
+#define INFO
+#define DEBUG
 
 #define DATA_PIN1 D1
 #define DATA_PIN2 D2
@@ -74,15 +74,29 @@ const PROGMEM char *MQTT_LIGHT_EFFECT_COMMAND_TOPIC = "home/esp8266_lamp/effect/
 const PROGMEM char *LIGHT_ON = "ON";
 const PROGMEM char *LIGHT_OFF = "OFF";
 
+//effect payloads
+const PROGMEM char *E_SOLID = "Solid";
+const PROGMEM char *E_RAINBOW_EXT = "Rainbow External";
+
+//Debug MQTT topic
 #ifdef DEBUG
 const PROGMEM char *TEST = "home/test";
 #endif
+
 // Maintained state for reporting to HA
+
+enum effect_list
+{
+    SOLID,
+    RAINBOW_EXTERNAL
+};
+
 boolean m_rgb_state = false;
 uint8_t m_rgb_brightness = 100;
 uint8_t m_rgb_red = 255;
 uint8_t m_rgb_green = 255;
 uint8_t m_rgb_blue = 255;
+effect_list m_effect_state = SOLID;
 
 // buffer used to send/receive data with MQTT
 const uint16_t MSG_BUFFER_SIZE = 512;
@@ -165,7 +179,7 @@ void blendToColor(CRGB newColor, unsigned char fadeAmount)
 // function called to adapt the brightness and the color of the led
 void setColor(uint8_t p_red, uint8_t p_green, uint8_t p_blue)
 {
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; i++)
     {
         if (init_done[i] != true)
             return;
@@ -203,9 +217,24 @@ void publishRGBColor()
     client.publish(MQTT_LIGHT_RGB_STATE_TOPIC, m_msg_buffer, true);
 }
 
+// function called to publish the effect of the led
+void publishRGBEffect()
+{
+    switch (m_effect_state)
+    {
+    case SOLID:
+        client.publish(MQTT_LIGHT_EFFECT_STATE_TOPIC, E_SOLID, true);
+        break;
+    case RAINBOW_EXTERNAL:
+        client.publish(MQTT_LIGHT_EFFECT_STATE_TOPIC, E_RAINBOW_EXT, true);
+        break;
+    }
+}
+
 // function called when a MQTT message arrived
 void callback(char *p_topic, byte *p_payload, unsigned int p_length)
 {
+    bool change = false;
     // concat the payload into a string
     String payload;
     for (uint8_t i = 0; i < p_length; i++)
@@ -225,34 +254,27 @@ void callback(char *p_topic, byte *p_payload, unsigned int p_length)
         if (payload.equals(String(LIGHT_ON)))
         {
             if (!m_rgb_state)
-            {
-                m_rgb_state = true;
-                setColor(m_rgb_red, m_rgb_green, m_rgb_blue);
-            }
+                change = true;
+            m_rgb_state = true;
         }
         else if (payload.equals(String(LIGHT_OFF)))
         {
             if (m_rgb_state)
-            {
-                m_rgb_state = false;
-                setColor(0, 0, 0);
-            }
+                change = true;
+            m_rgb_state = false;
         }
     }
     else if (String(MQTT_LIGHT_BRIGHTNESS_COMMAND_TOPIC).equals(p_topic))
     {
         uint8_t brightness = payload.toInt();
         if (brightness < 0 || brightness > 100)
-        {
-            // do nothing...
             return;
-        }
         else
         {
             init_done[1] = true;
+            if (m_rgb_brightness != brightness)
+                change = true;
             m_rgb_brightness = brightness;
-            if(m_rgb_state)
-                setColor(m_rgb_red, m_rgb_green, m_rgb_blue);
         }
     }
     else if (String(MQTT_LIGHT_RGB_COMMAND_TOPIC).equals(p_topic))
@@ -263,40 +285,71 @@ void callback(char *p_topic, byte *p_payload, unsigned int p_length)
 
         uint8_t rgb_red = payload.substring(0, firstIndex).toInt();
         if (rgb_red < 0 || rgb_red > 255)
-        {
             return;
-        }
         else
         {
+            if (m_rgb_red != rgb_red)
+                change = true;
             m_rgb_red = rgb_red;
         }
 
         uint8_t rgb_green = payload.substring(firstIndex + 1, lastIndex).toInt();
         if (rgb_green < 0 || rgb_green > 255)
-        {
             return;
-        }
         else
         {
+            if (m_rgb_green != rgb_green)
+                change = true;
             m_rgb_green = rgb_green;
         }
 
         uint8_t rgb_blue = payload.substring(lastIndex + 1).toInt();
         if (rgb_blue < 0 || rgb_blue > 255)
-        {
             return;
-        }
         else
         {
+            if (m_rgb_blue != rgb_blue)
+                change = true;
             m_rgb_blue = rgb_blue;
         }
         init_done[2] = true;
-        if(m_rgb_state)
-            setColor(m_rgb_red, m_rgb_green, m_rgb_blue);
     }
+    else if (String(MQTT_LIGHT_EFFECT_COMMAND_TOPIC).equals(p_topic))
+    {
+        init_done[3] = true;
+        if (payload.equals(String(E_SOLID)))
+        {
+            if (m_effect_state != SOLID)
+                change = true;
+            m_effect_state = SOLID;
+        }
+        else if (payload.equals(String(E_RAINBOW_EXT)))
+        {
+            if (m_effect_state != RAINBOW_EXTERNAL)
+                change = true;
+            m_effect_state = RAINBOW_EXTERNAL;
+        }
+    }
+
     publishRGBColor();
     publishRGBState();
     publishRGBBrightness();
+    publishRGBEffect();
+
+    //If off, turn off and exit function.
+    if (!m_rgb_state)
+    {
+        if(change) setColor(0, 0, 0);
+        return;
+    }
+    //If effect is not solid, handle in loop (exit).
+    if (m_effect_state != SOLID)
+    {
+        if(change) setColor(0, 0, 0);
+        return;
+    }
+    //Effect is solid and lamp on, set new color.
+    if(change) setColor(m_rgb_red, m_rgb_green, m_rgb_blue);
 }
 
 void ICACHE_FLASH_ATTR SetupFastLED()
@@ -318,7 +371,7 @@ void ICACHE_FLASH_ATTR SetupFastLED()
 void ICACHE_FLASH_ATTR setup()
 {
     delay(3000); // 3 second delay for recovery
-#if defined(DEBUG) || defined(INFO) || defined (ERROR)
+#if defined(DEBUG) || defined(INFO) || defined(ERROR)
     Serial.begin(921600);
 #endif
 
@@ -500,6 +553,7 @@ void ICACHE_FLASH_ATTR reconnect()
     }
 }
 
+uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 void loop()
 {
     ArduinoOTA.handle();
@@ -512,4 +566,20 @@ void loop()
         reconnect();
     }
     client.loop();
+    if (m_rgb_state)
+    {
+        switch (m_effect_state)
+        {
+        case SOLID:
+            break;
+        case RAINBOW_EXTERNAL:
+        {
+            fill_rainbow(leds + ARM_LEN, EDGE_LEN, gHue, 7);
+            EVERY_N_MILLISECONDS(20) { gHue++; } // slowly cycle the "base color" through the rainbow
+            FastLED.show();
+            FastLED.delay(1000 / FRAMES_PER_SECOND);
+            break;
+        }
+        }
+    }
 }
