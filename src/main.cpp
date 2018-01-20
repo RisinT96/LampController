@@ -16,9 +16,9 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
-#define DEBUG
-#define INFO
-#define DEBUG
+//#define DEBUG
+//#define INFO
+//#define DEBUG
 
 #define DATA_PIN1 D1
 #define DATA_PIN2 D2
