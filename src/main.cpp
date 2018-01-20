@@ -339,17 +339,20 @@ void callback(char *p_topic, byte *p_payload, unsigned int p_length)
     //If off, turn off and exit function.
     if (!m_rgb_state)
     {
-        if(change) setColor(0, 0, 0);
+        if (change)
+            setColor(0, 0, 0);
         return;
     }
     //If effect is not solid, handle in loop (exit).
     if (m_effect_state != SOLID)
     {
-        if(change) setColor(0, 0, 0);
+        if (change)
+            setColor(0, 0, 0);
         return;
     }
     //Effect is solid and lamp on, set new color.
-    if(change) setColor(m_rgb_red, m_rgb_green, m_rgb_blue);
+    if (change)
+        setColor(m_rgb_red, m_rgb_green, m_rgb_blue);
 }
 
 void ICACHE_FLASH_ATTR SetupFastLED()
@@ -574,7 +577,7 @@ void loop()
             break;
         case RAINBOW_EXTERNAL:
         {
-            fill_rainbow(leds + ARM_LEN, EDGE_LEN, gHue, 7);
+            fill_gradient(leds + ARM_LEN, EDGE_LEN, CHSV(gHue+1, 255, 255), CHSV(gHue, 255, 255), FORWARD_HUES);
             EVERY_N_MILLISECONDS(20) { gHue++; } // slowly cycle the "base color" through the rainbow
             FastLED.show();
             FastLED.delay(1000 / FRAMES_PER_SECOND);
