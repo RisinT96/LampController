@@ -6,9 +6,11 @@
             "request": "launch",
             "cwd": "${workspaceRoot}",
             "name": "PlatformIO Debugger",
-            "target": "c:/Users/Tal/Documents/PlatformIO/Projects/171117-161759-d1_mini/.pioenvs/d1_mini/firmware.elf",
+            "target": "c:/Users/Tal/Repositories/LampController/.pioenvs/d1_mini/firmware.elf",
             "gdbpath": "C:/Users/Tal/.platformio/penv/Scripts/piodebuggdb",
-            "autorun": [ "source .pioinit" ]
+            "autorun": [ "source .pioinit" ],
+            "preLaunchTask": "PlatformIO: Pre-Debug",
+            "internalConsoleOptions": "openOnSessionStart"
         }
     ]
 }
